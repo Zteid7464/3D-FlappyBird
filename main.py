@@ -120,6 +120,81 @@ class Model:
         self.eulers = np.array(eulers, dtype=np.float32)
 
 
+class Entity:
+
+    def __init__(self, mesh: Mesh, material: Material,
+                 positions: list[float],
+                 eulers: list[float],
+                 velocities: list[float],
+                 size: list[float]):
+        self.positions = np.array(positions, dtype=np.float32)
+        self.eulers = np.array(eulers, dtype=np.float32)
+        self.velocities = np.array(velocities, dtype=np.float32)
+        self.size = np.array(size, dtype=np.float32)
+
+        self.mesh = mesh
+        self.material = material
+
+        self.active = True
+
+    def update(self):
+        if self.active:
+            self.positions += self.velocities
+
+            self.transform_mat = pyrr.matrix44.create_identity(dtype=np.float32)
+
+            self.transform_mat = pyrr.matrix44.multiply(
+                self.transform_mat,
+                pyrr.matrix44.create_from_scale(self.size, dtype=np.float32)
+            )
+
+            self.transform_mat = pyrr.matrix44.multiply(
+                self.transform_mat,
+                pyrr.matrix44.create_from_eulers(eulers=np.radians(self.eulers), dtype=np.float32)
+            )
+            self.transform_mat = pyrr.matrix44.multiply(
+                self.transform_mat,
+                pyrr.matrix44.create_from_translation(self.positions, dtype=np.float32)
+            )
+
+    def draw(self, shader, model_mat_location):
+        if self.active:
+            glUseProgram(shader)
+            self.material.use()
+
+            glUniformMatrix4fv(model_mat_location, 1, GL_FALSE, self.transform_mat)
+            glBindVertexArray(self.mesh.vao)
+            glDrawArrays(GL_TRIANGLES, 0, self.mesh.vertex_count)
+        else:
+            pass
+
+class Bullet(Entity):
+
+    def __init__(self, mesh: Mesh, material: Material,
+             positions: list[float],
+             eulers: list[float],
+             velocities: list[float],
+             size: list[float]):
+        super().__init__(mesh=mesh, material=material, positions=positions, eulers=eulers, velocities=velocities, size=size)
+
+    def update(self, entities: dict=dict()):
+        super().update()
+        if self.active:
+            for key, entity in entities.items():
+                if (entity.positions[0] < self.positions[0] < entity.positions[0] + entity.size[0] and
+                    entity.positions[1] < self.positions[1] < entity.positions[1] + entity.size[1] and
+                    entity.positions[2] < self.positions[2] < entity.positions[2] + entity.size[2]):
+                    entity.active = False
+
+
+            if self.velocities[0] > 0:
+                self.eulers[2] = 90
+            if self.velocities[1] > 0:
+                self.eulers[0] = 90
+            if self.velocities[1] > 0:
+                self.eulers[1] = 90
+
+
 class App:
 
     def __init__(self):
@@ -141,19 +216,20 @@ class App:
         # get the sampler to sample texture 0
         glUniform1i(glGetUniformLocation(self.shader, "imageTexture"), 0)
 
-        self.models = {
-            "cube1": Model(
-                position=[0, 0, -5],
-                eulers=[0, 0, 0]),
-            "cube2": Model(
-                position=[2, 0, -5],
-                eulers=[0, 0, 0]
-            )
-        }
-
         self.cube_mesh = Mesh("models/cube.obj")
+        self.bullet_mesh = Mesh("models/test_bullet.obj")
 
         self.wood_texture = Material("textures/wood.jpeg")
+        self.cat_texture = Material("textures/cat.png")
+
+        self.entitys = {
+            "cube1": Entity(self.cube_mesh, self.wood_texture, [0.0, 0.0, -5.0], [0.0, 3.0, 0.0], [0.0, 0.0, 0.0], [1, 1, 1]),
+            "cube2": Entity(self.cube_mesh, self.cat_texture, [2.0, 0.0, -5.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.5, 1, 0.2])
+        }
+
+        self.bullets = {
+            "bullet1": Bullet(self.bullet_mesh, self.wood_texture, [0.0, 0.0, -3.0], [0.0, 0.0, 0.0], [0.0, 0.0, -0.0], [0.2, 0.2, 0.2]),
+        }
 
         projection_transform = pyrr.matrix44.create_perspective_projection(
             fovy=45, aspect=640/480,
@@ -192,44 +268,37 @@ class App:
                 if event.type == pg.QUIT:
                     running = False
 
+            pressed_keys = pg.key.get_pressed()
+
+            if pressed_keys[pg.K_w]:
+                self.entitys["cube1"].positions[2] -= 0.04
+            if pressed_keys[pg.K_s]:
+                self.entitys["cube1"].positions[2] += 0.04
+            if pressed_keys[pg.K_a]:
+                self.entitys["cube1"].positions[0] -= 0.04
+            if pressed_keys[pg.K_d]:
+                self.entitys["cube1"].positions[0] += 0.04
+            if pressed_keys[pg.K_SPACE]:
+                self.entitys["cube1"].positions[1] += 0.04
+            if pressed_keys[pg.K_LSHIFT]:
+                self.entitys["cube1"].positions[1] -= 0.04
+
+
+            # self.entitys["cube1"].eulers[0] += 0.2
+            # if self.entitys["cube1"].eulers[0] > 360:
+            #     self.entitys["cube1"].eulers[0] -= 360
+
+
             # refresh screen
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-            # update cube
-            # self.cube.eulers[2] += 0.2
-            # self.cube.eulers[1] += 0.2
-            self.models["cube1"].eulers[0] += 0.2
-            self.models["cube2"].position[0] = math.sin(self.models["cube1"].eulers[0]) / 2
-            if self.models["cube1"].eulers[2] > 360:
-                # self.cube.eulers[2] -= 360
-                # self.cube.eulers[1] -= 360
-                self.models["cube1"].eulers[0] -= 360
+            for entity in self.entitys.values():
+                entity.update()
+                entity.draw(self.shader, self.model_matrix_location)
 
-            glUseProgram(self.shader)
-            self.wood_texture.use()
-
-            for model in self.models.values():
-
-                model_transform = pyrr.matrix44.create_identity(dtype=np.float32)
-                model_transform = pyrr.matrix44.multiply(
-                    m1=model_transform,
-                    m2=pyrr.matrix44.create_from_eulers(
-                        eulers=np.radians(model.eulers),
-                        dtype=np.float32
-                    )
-                )
-
-                model_transform = pyrr.matrix44.multiply(
-                    m1=model_transform,
-                    m2=pyrr.matrix44.create_from_translation(
-                        vec=model.position,
-                        dtype=np.float32
-                    )
-                )
-
-                glUniformMatrix4fv(self.model_matrix_location, 1, GL_FALSE, model_transform)
-                glBindVertexArray(self.cube_mesh.vao)
-                glDrawArrays(GL_TRIANGLES, 0, self.cube_mesh.vertex_count)
+            for bullet in self.bullets.values():
+                bullet.update(self.entitys)
+                bullet.draw(self.shader, self.model_matrix_location)
 
             # display the fps
             pg.display.set_caption(str(self.clock.get_fps()))
